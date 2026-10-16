@@ -1,30 +1,38 @@
 # Modelo de dados — Sabor da Gente
 
-Banco único em **SQLite**, acessado **somente pela API** (`sabor-da-gente-api`).
-O app mobile (PDM) e o painel web (DAW III) nunca abrem o arquivo do banco.
+Banco único em **PostgreSQL no Supabase**. O app mobile (PDM) e o painel web
+(DAW III) acessam pela biblioteca supabase-js; as regras de acesso ficam no
+próprio banco (Row Level Security) e as regras de negócio em funções SQL.
 
-- Esquema: [`db/schema.sql`](../db/schema.sql)
-- Dados iniciais: [`db/seed.sql`](../db/seed.sql)
-- Contrato da API: [`api.md`](api.md)
+- SQL: [`../supabase/migrations/`](../supabase/migrations/)
+- Como usar no app e no painel: [`como-usar.md`](como-usar.md)
+- Fluxo entre os sistemas: [`fluxo-sistemas.png`](fluxo-sistemas.png)
+- Modelo lógico (brModelo): [`sabor-da-gente-modelo-logico.png`](sabor-da-gente-modelo-logico.png)
+  — feito na versão SQLite; as tabelas são as mesmas, exceto `usuarios`, que virou `perfis` (ver abaixo).
+
+O app mobile também tem um **SQLite local** com uma cópia reduzida deste
+modelo (mesmos nomes de tabelas e colunas), para a persistência local exigida
+em PDM e para funcionar sem internet.
 
 ## Convenções
 
 | Assunto | Decisão | Por quê |
 |---|---|---|
-| Dinheiro | `INTEGER` em **centavos** (R$ 45,00 = `4500`) | Evita erro de arredondamento de `REAL` (0,1 + 0,2 ≠ 0,3). |
-| Datas | `TEXT` ISO 8601 UTC (`2026-10-14T13:00:00Z`) | SQLite não tem tipo data; ISO ordena corretamente como texto. |
-| Booleanos | `INTEGER` 0/1 | SQLite não tem `BOOLEAN`. |
-| Exclusão | Catálogo usa `ativo = 0` (exclusão lógica) | Pedidos antigos continuam apontando para o produto. |
-| Histórico | Pedidos guardam **snapshot** de nomes e preços | Mudar o preço da Calabresa amanhã não pode alterar o pedido de ontem. |
-| Chaves estrangeiras | `PRAGMA foreign_keys = ON` em **toda** conexão | No SQLite elas vêm desligadas por padrão. |
+| Dinheiro | `integer` em **centavos** (R$ 45,00 = `4500`) | Evita erro de arredondamento. |
+| Datas | `timestamptz` | Fuso horário correto. |
+| Exclusão | Catálogo usa `ativo = false` | Pedidos antigos continuam apontando para o produto. |
+| Histórico | Pedidos guardam **fotografia** de nomes e preços | Mudar o preço amanhã não altera o pedido de ontem. |
+| Usuários | Login e senha no **Supabase Auth** (`auth.users`); dados em `perfis` | Senha nunca fica numa tabela nossa. |
+| Segurança | **RLS ligado em todas as tabelas** + permissões explícitas | O app usa uma chave pública. |
 
 ## Diagrama ER
 
 ```mermaid
 erDiagram
-  usuarios ||--o{ enderecos : possui
-  usuarios ||--o{ pedidos : faz
-  usuarios ||--o{ favoritos : marca
+  auth_users ||--|| perfis : "1 para 1"
+  perfis ||--o{ enderecos : possui
+  perfis ||--o{ pedidos : faz
+  perfis ||--o{ favoritos : marca
   categorias ||--o{ produtos : agrupa
   sabores ||--o{ sabor_precos : "tem preço em"
   tamanhos ||--o{ sabor_precos : "define preço de"
@@ -49,123 +57,91 @@ erDiagram
 ### Pessoas
 | Tabela | Papel |
 |---|---|
-| `usuarios` | Login de **clientes e administradores**. A coluna `tipo` (`cliente` / `admin`) diferencia os dois. |
-| `enderecos` | Endereços do cliente (vários por cliente, um `principal`). |
+| `auth.users` | *(do Supabase)* e-mail e senha. Não é acessada pelo app. |
+| `perfis` | Nome, telefone e `tipo` (`cliente` / `admin`). Criado sozinho no cadastro. |
+| `enderecos` | Endereços do cliente (vários, um `principal`). |
 
 ### Catálogo
 | Tabela | Papel |
 |---|---|
-| `categorias` | Pizzas, Esfihas, Bebidas, Combos, Sobremesas. `tipo = 'pizza'` faz o app abrir o "Monte sua pizza"; `tipo = 'produtos'` lista produtos. |
+| `categorias` | Pizzas, Esfihas, Bebidas, Combos, Sobremesas. `tipo = 'pizza'` abre o "Monte sua pizza". |
 | `produtos` | Itens de **preço fixo**: esfihas, bebidas, sobremesas, combos. |
-| `tamanhos` | Tamanhos de pizza, com `max_sabores` (Grande = 2). |
-| `massas` | Tipos de massa, com `acrescimo` (pode ser 0). |
-| `sabores` | Sabores de pizza (Calabresa, Portuguesa...). |
-| `sabor_precos` | Preço de **cada sabor em cada tamanho**. Sem linha = indisponível naquele tamanho. |
+| `tamanhos` | Tamanhos de pizza, com `max_sabores`. |
+| `massas` | Tipos de massa, com `acrescimo`. |
+| `sabores` | Sabores de pizza. |
+| `sabor_precos` | Preço de **cada sabor em cada tamanho**. Sem linha = indisponível. |
 | `adicionais` | Borda recheada, queijo extra etc. |
 | `cupons` | *(fase 2)* Desconto percentual ou em valor fixo. |
+| `configuracoes` | `taxa_entrega`, `regra_preco_pizza`. |
 
 ### Pedido
 | Tabela | Papel |
 |---|---|
-| `pedidos` | Cabeçalho: cliente, entrega/retirada, endereço (snapshot), status, valores. |
-| `itens_pedido` | Cada linha. `tipo = 'produto'` aponta para `produtos`; `tipo = 'pizza'` aponta para `tamanhos` + `massas`. |
-| `itens_pedido_sabores` | Sabores escolhidos na pizza, com nome e preço da época. |
+| `pedidos` | Cabeçalho: cliente, entrega/retirada, endereço (fotografia), status, valores. |
+| `itens_pedido` | Cada linha: `produto` (aponta para `produtos`) ou `pizza` (aponta para `tamanhos` + `massas`). |
+| `itens_pedido_sabores` | Sabores da pizza, com nome e preço da época. |
 | `itens_pedido_adicionais` | Adicionais da pizza, com nome e preço da época. |
 | `pedido_status_historico` | Linha do tempo do acompanhamento (quem mudou e quando). |
-| `pagamentos` | Pagamento **simulado** (1 por pedido): forma, status, troco. |
-
-### Outros
-| Tabela | Papel |
-|---|---|
-| `favoritos` | *(fase 2)* Cliente favorita um produto **ou** um sabor. |
-| `configuracoes` | Chave/valor: `taxa_entrega`, `regra_preco_pizza`. |
+| `pagamentos` | Pagamento **simulado** (1 por pedido). |
+| `favoritos` | *(fase 2)* Produto **ou** sabor favorito. |
 
 ## Por que pizza é diferente dos outros produtos
 
-Uma esfiha tem um preço só. Uma pizza é **montada**: tamanho + massa + 1 ou 2 sabores + adicionais, e o preço depende da combinação. Se cada combinação fosse uma linha em `produtos`, seriam centenas de linhas. Por isso:
+Uma esfiha tem um preço só. Uma pizza é **montada** (tamanho + massa + 1 ou 2
+sabores + adicionais) e o preço depende da combinação. Por isso pizza não é
+uma linha em `produtos`: o banco combina as peças na hora do pedido.
 
-- produtos de preço fixo → `produtos`;
-- pizza → peças (`tamanhos`, `massas`, `sabores`, `sabor_precos`, `adicionais`) que a API combina.
+## Regras de negócio — onde cada uma está
 
-Isso também corrige o app atual, que guardava o nome da esfiha em `sabores`.
+| # | Regra | Onde |
+|---|---|---|
+| R1 | Preço da pizza = preço dos sabores (**maior** ou **média**, conforme `configuracoes.regra_preco_pizza`) + `massa.acrescimo` + soma dos adicionais | função `calcular_itens` |
+| R2 | 1 ≤ sabores ≤ `tamanhos.max_sabores`, sem repetir, todos com preço no tamanho | função `calcular_itens` |
+| R3 | O app manda **IDs e quantidades**, nunca preços | funções `calcular_pedido` / `criar_pedido` |
+| R4 | `subtotal = Σ itens`; `total = subtotal − desconto + taxa_entrega`; taxa só em entrega | função `calcular_totais` + `CHECK` na tabela |
+| R5 | Entrega exige endereço **do próprio cliente**; o texto é copiado para o pedido | função `criar_pedido` |
+| R6 | Pagamento simulado: pix/cartão aprovados na hora, dinheiro pendente; troco só em dinheiro e ≥ total | função `criar_pedido` + `CHECK` |
+| R7 | Fluxo de status (abaixo); só admin avança; cliente só cancela em "realizado" | funções `alterar_status` / `cancelar_pedido` |
+| R8 | Cupom: ativo, na validade, subtotal ≥ mínimo, dentro do limite de usos; desconto ≤ subtotal | função `calcular_totais` |
+| R9 | Pedido, itens, sabores, adicionais, pagamento e 1º status gravados juntos | função `criar_pedido` (uma transação) |
 
-## Regras de negócio
-
-### R1 — Preço da pizza
-```
-preco_unitario = preço_dos_sabores + massa.acrescimo + soma(adicionais.preco)
-```
-`preço_dos_sabores` segue `configuracoes.regra_preco_pizza`:
-- **`maior`** (padrão, igual ao app hoje): o maior preço entre os sabores escolhidos, no tamanho escolhido.
-  Grande Calabresa (45) + Portuguesa (48) → **R$ 48,00**.
-- **`media`** (alternativa): média dos preços, arredondada para cima ao centavo.
-
-> ⚠️ Decisão da equipe: confirmar qual regra vale. Basta mudar a configuração; o banco não muda.
-
-### R2 — Quantidade de sabores
-`1 ≤ nº de sabores ≤ tamanhos.max_sabores`, sem repetir sabor, e todos com preço cadastrado naquele tamanho.
-
-### R3 — A API recalcula tudo
-O app envia **IDs e quantidades**, nunca preços. A API busca os preços atuais, calcula e grava. Preço vindo do cliente é ignorado.
-
-### R4 — Totais do pedido
-```
-item.subtotal  = preco_unitario × quantidade
-pedido.subtotal = soma(item.subtotal)
-pedido.desconto = cupom aplicado sobre o subtotal (nunca maior que o subtotal)
-pedido.taxa_entrega = configuracoes.taxa_entrega se 'entrega', 0 se 'retirada'
-pedido.total = subtotal − desconto + taxa_entrega
-```
-O banco reforça as duas igualdades com `CHECK`.
-
-### R5 — Entrega
-`tipo_entrega = 'entrega'` exige endereço **do próprio cliente** e ativo. A API copia o texto para `endereco_entrega` (snapshot).
-
-### R6 — Pagamento simulado
-Formas: `pix`, `cartao`, `dinheiro`. `troco_para` só em dinheiro e ≥ total. O pagamento nasce `pendente`; pix/cartão podem ser marcados `aprovado` na hora (simulação).
-
-### R7 — Fluxo de status
+### Fluxo de status (R7)
 ```
 realizado ──► em_preparacao ──► saiu_para_entrega ──► entregue      (entrega)
                        └──────► pronto_para_retirada ─► entregue    (retirada)
 realizado / em_preparacao ──► cancelado
 ```
-- Só o **admin** avança status.
-- O **cliente** só pode cancelar enquanto o pedido está `realizado`.
-- Toda mudança gera uma linha em `pedido_status_historico`.
-- Transição fora do fluxo → erro `409 TRANSICAO_INVALIDA`.
 
-### R8 — Cupom *(fase 2)*
-Ativo, dentro da validade, `subtotal ≥ valor_minimo_pedido` e sem ultrapassar `usos_maximos` (contado em pedidos não cancelados).
+## Segurança (RLS)
 
-### R9 — Gravação atômica
-Pedido, itens, sabores, adicionais, pagamento e primeiro status são gravados numa **única transação**. Se algo falhar, nada é salvo.
+| Quem | Pode |
+|---|---|
+| Visitante (`anon`) | ler o cardápio ativo |
+| Cliente | o próprio perfil (só nome e telefone), os próprios endereços, favoritos e pedidos; criar e cancelar pedidos pelas funções |
+| Admin (`perfis.tipo = 'admin'`) | tudo do cardápio, todos os pedidos, mudar status, aprovar pagamento, estatísticas |
 
-## Mapeamento para POO (classes no backend)
+Ninguém grava em `pedidos`, `itens_pedido`, `pagamentos` ou no histórico
+diretamente: só pelas funções, que validam antes. Detalhes em
+[`como-usar.md`](como-usar.md#8-resumo-do-que-cada-um-pode-fazer).
 
-| Classe | Tabela(s) | Observação |
-|---|---|---|
-| `Usuario` (abstrata) | `usuarios` | |
-| `Cliente extends Usuario` | `usuarios` (`tipo='cliente'`) | tem `enderecos`, `pedidos`, `favoritos` |
-| `Administrador extends Usuario` | `usuarios` (`tipo='admin'`) | `alterarStatus(pedido, status)` |
-| `Categoria` | `categorias` | |
-| `Produto` | `produtos` | `preco` fixo |
-| `Pizza` | `tamanhos`, `massas`, `sabores`, `adicionais` | `calcularPreco()` implementa R1/R2 |
-| `Sabor`, `Tamanho`, `Massa`, `Adicional` | idem | |
-| `ItemPedido` (abstrata) | `itens_pedido` | `subtotal()` |
-| `ItemProduto extends ItemPedido` | `tipo='produto'` | |
-| `ItemPizza extends ItemPedido` | `tipo='pizza'` + sabores/adicionais | |
-| `Pedido` | `pedidos` | `calcularTotais()`, `alterarStatus()` (R4, R7) |
-| `Endereco` | `enderecos` | |
-| `Pagamento` | `pagamentos` | |
-| `Cupom` | `cupons` | `calcularDesconto(subtotal)` |
+## POO no app mobile
 
-Herança em tabela única (`usuarios` com `tipo`) e polimorfismo em `ItemPedido` são bons exemplos de POO para apresentar.
+As classes de domínio ficam no app (`src/models/` e `src/repositories/`):
+
+| Classe | Corresponde a |
+|---|---|
+| `Categoria`, `Produto`, `Tamanho`, `Massa`, `Sabor`, `Adicional` | tabelas do catálogo |
+| `CardapioRepository` (interface) | acesso ao cardápio |
+| `SqliteCardapioRepository` | cópia local no celular |
+| `SupabaseCardapioRepository` *(integração)* | este banco |
+
+O mesmo padrão vale para pedidos e perfil: uma interface, duas implementações
+(SQLite local e Supabase), e as telas não sabem de onde vêm os dados.
 
 ## Fases
 
 | Fase 1 (essencial) | Fase 2 (se der tempo) |
 |---|---|
-| usuários, endereços, categorias, produtos, tamanhos, massas, sabores, adicionais, pedidos, itens, pagamentos, histórico de status | cupons, favoritos, estatísticas avançadas, imagens por upload |
+| perfis, endereços, catálogo, pedidos, itens, pagamentos, histórico, Realtime | cupons, favoritos, estatísticas avançadas, imagens no Supabase Storage |
 
-As tabelas da fase 2 já estão no esquema; basta não expor as rotas até lá.
+As tabelas e regras da fase 2 já estão no banco; basta não usar até lá.
