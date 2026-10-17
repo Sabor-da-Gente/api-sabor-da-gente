@@ -15,3 +15,6 @@ __pycache__/
 .vscode/
 *.iml
 .DS_Store
+
+# Dependencias Node.js
+node_modules/
