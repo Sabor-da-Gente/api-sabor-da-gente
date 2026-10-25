@@ -4,57 +4,82 @@ Banco central do sistema Sabor da Gente, compartilhado por:
 
 | Repositório | Usa o banco para |
 |---|---|
-| `mobile-sabor-da-gente` (PDM) | cardápio, pedidos, acompanhamento, perfil |
-| painel web (DAW III) | pedidos, status, cardápio, clientes, estatísticas |
+| `mobile-sabor-da-gente` (PDM) | login, perfil, endereços, criar e acompanhar pedidos |
+| `sabor--da-gente-web` (DAW III) | cardápio (produtos), pedidos e status |
 
 Não há backend próprio: o app e o painel falam direto com o **Supabase**
-(PostgreSQL + Auth + API automática + Realtime). As regras de acesso ficam
-no banco (**Row Level Security**) e as regras de negócio em **funções SQL**.
+(PostgreSQL + Auth + API automática + Realtime). As regras de negócio ficam em
+**funções SQL**, e o preço de um pedido é sempre calculado no banco, nunca pelo app.
 
 ![Fluxo entre os sistemas](docs/fluxo-sistemas.png)
 
-## Conteúdo
+## Por que Supabase
 
-```
-supabase/migrations/   SQL do banco, aplicado em ordem
-  …_tabelas.sql           18 tabelas + gatilhos
-  …_seguranca_rls.sql     permissões e regras de acesso (RLS)
-  …_funcoes.sql           calcular_pedido, criar_pedido, alterar_status,
-                          cancelar_pedido, estatisticas_vendas
-  …_realtime.sql          avisos em tempo real de pedidos
-  …_cardapio_inicial.sql  categorias, produtos, sabores, preços
-docs/
-  como-usar.md            guia para o app e o painel (supabase-js)
-  modelo-de-dados.md      tabelas, regras de negócio e segurança
-  fluxo-sistemas.png      diagrama do fluxo
-testes/                   teste das regras num PostgreSQL local (opcional)
-```
+- PostgreSQL na nuvem, gratuito, com autenticação pronta e API gerada automaticamente.
+- Permite que o app (React Native) e o painel (Next.js) usem o mesmo banco sem escrever um servidor.
+- Regras de negócio em SQL garantem que o preço do pedido não depende do app.
 
-## Como montar o banco no Supabase
+## Estado real do banco
 
-1. Crie um projeto em [supabase.com](https://supabase.com) (plano gratuito).
-2. Aplique as migrations, de um destes jeitos:
+O banco já existia (tabelas legadas `categorias`, `produtos`, `pedidos` e `itens_pedido`, com `pedidos.id` em UUID).
+As migrations novas **adaptam** esse banco sem apagar nada. Por isso a ordem e a lista abaixo são específicas dele.
 
-   **a) Pelo painel (mais simples):** abra **SQL Editor** e rode o conteúdo de
-   cada arquivo de `supabase/migrations/`, **um por vez e na ordem** do nome.
+### Migrations aplicadas (nesta ordem, uma por vez no SQL Editor)
 
-   **b) Pelo Supabase CLI:**
-   ```bash
-   npx supabase login
-   npx supabase init            # só na primeira vez: cria supabase/config.toml
-   npx supabase link --project-ref <id-do-projeto>
-   npx supabase db push         # aplica as migrations que faltam
-   ```
-3. Crie o administrador (**Authentication → Users → Add user**) e, no SQL Editor:
-   ```sql
-   update public.perfis set tipo = 'admin'
-    where id = (select id from auth.users where email = 'admin@sabordagente.com');
-   ```
-4. Copie a **URL do projeto** e a **publishable key** (Project Settings → API Keys)
-   para o `.env` do app e do painel. Veja [`docs/como-usar.md`](docs/como-usar.md).
+| # | Arquivo | O que faz |
+|---|---|---|
+| 1 | `20261016120500_adaptar_schema_existente.sql` | cria perfis, endereços, catálogo de pizza, pagamentos e histórico; acrescenta colunas às tabelas legadas |
+| 2 | `20261024135000_funcoes_base.sql` | gatilhos de `atualizado_em` e criação automática do perfil no cadastro |
+| 3 | `20261024141000_seguranca_legado.sql` | `eh_admin()`, RLS nas tabelas novas e gatilho que grava o histórico de status |
+| 4 | `20261016120200_funcoes.sql` | funções originais de cálculo e de pedido |
+| 5 | `20261024140000_corrigir_funcoes_pedidos.sql` | corrige `criar_pedido`, `alterar_status` e `cancelar_pedido` para UUID e para o schema legado |
+| 6 | `20261024142000_catalogo_novo.sql` | tamanhos, massas, sabores, preços, adicionais, cupom e taxa de entrega |
+| 7 | `20261024143000_realtime_legado.sql` | avisos em tempo real |
+| 8 | `20261024150000_status_pronto_retirada.sql` | status `pronto_para_retirada` |
 
-> ⚠️ Nunca use a *secret key* / *service_role* no app ou no painel: ela
-> ignora todas as regras de segurança.
+### ⚠️ Migrations que NÃO devem ser aplicadas neste banco
+
+`20261016120000_tabelas.sql`, `20261016120100_seguranca_rls.sql`, `20261016120300_realtime.sql`
+e `20261016120400_cardapio_inicial.sql` pertencem ao desenho original (banco novo) e **conflitam** com o banco legado.
+Por isso também **não use `supabase db push`** neste projeto: aplique pelo SQL Editor, na ordem da tabela.
+
+## Status do pedido
+
+`recebido` → `em_preparo` → `saiu_para_entrega` → `entregue` (entrega)
+`recebido` → `em_preparo` → `pronto_para_retirada` → `entregue` (retirada)
+`recebido` ou `em_preparo` → `cancelado`
+
+O histórico de cada mudança é gravado por um gatilho, inclusive quando o painel altera o status direto na tabela.
+
+## Funções principais
+
+| Função | Quem chama | O que faz |
+|---|---|---|
+| `calcular_pedido(itens, tipo_entrega, cupom)` | app | simula o total sem gravar |
+| `criar_pedido(...)` | app (logado) | valida, recalcula preços no banco e grava pedido, itens, pagamento e histórico |
+| `cancelar_pedido(id)` | app (dono do pedido) | cancela enquanto o status é `recebido` |
+| `alterar_status(id, status)` | admin | muda o status respeitando as transições |
+| `estatisticas_vendas(de, ate)` | admin | faturamento, ticket médio e mais vendidos |
+
+## Como usar o banco
+
+1. A URL e a *publishable key* do projeto já estão no `.env` do app e do painel.
+2. Para criar um administrador: **Authentication → Users → Add user** e, no SQL Editor:
+
+        update public.perfis set tipo = 'admin'
+         where id = (select id from auth.users where email = 'EMAIL_DO_ADMIN');
+
+3. Detalhes de uso do `supabase-js` em [`docs/como-usar.md`](docs/como-usar.md) e das tabelas em [`docs/modelo-de-dados.md`](docs/modelo-de-dados.md).
+
+> ⚠️ Nunca use a *secret key* / *service_role* no app ou no painel: ela ignora todas as regras de segurança.
+> Este projeto é acadêmico: as tabelas legadas continuam com acesso aberto à chave pública para o painel funcionar sem login.
+
+## Estrutura
+
+    supabase/migrations/   SQL do banco
+    docs/                  modelo de dados, guia de uso e diagramas
+    backup-migrations/     (só local, fora do Git) cópias de segurança
+
 
 ## Regras da equipe
 
