@@ -146,7 +146,13 @@ await supabase.from('enderecos').insert({
 });                                       // usuario_id é preenchido sozinho
 
 await supabase.from('enderecos').update({ ativo: false }).eq('id', id);   // "apagar"
+
+// Endereço principal: use a função (desmarca os outros na mesma transação)
+const { error } = await supabase.rpc('definir_endereco_principal', { p_endereco_id: id });
+// error.hint === 'NAO_ENCONTRADO' → endereço não existe, é de outro usuário ou está inativo
 ```
+Não troque o principal com `update` direto: se a conexão cair entre os dois
+`update`, o cliente fica sem endereço principal.
 
 ---
 

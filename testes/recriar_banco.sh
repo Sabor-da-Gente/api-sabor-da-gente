@@ -18,6 +18,7 @@ ORDEM=(
   20261024143000_realtime_legado.sql
   20261024150000_status_pronto_retirada.sql
   20261121120000_idempotencia_criar_pedido.sql
+  20261122120000_definir_endereco_principal.sql
 )
 
 $P -d postgres -c "drop database if exists $BANCO with (force)" -c "create database $BANCO"
