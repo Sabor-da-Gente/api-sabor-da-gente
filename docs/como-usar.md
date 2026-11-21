@@ -225,10 +225,20 @@ const { data: pedido, error } = await supabase.rpc('criar_pedido', {
   p_troco_para: 10000,             // só em dinheiro; >= total
   p_cupom: null,
   p_observacao: 'Sem cebola',      // até 300 caracteres
+  p_chave_cliente: chave,          // UUID gerado UMA vez por pedido (ver abaixo)
 });
-// pedido = { id: 42, status: 'realizado', itens: [...], subtotal, desconto, taxaEntrega, total }
+// pedido = { id: 'uuid…', numero: 42, status: 'recebido', itens: [...],
+//            subtotal, desconto, taxaEntrega, total, repetido: false }
 if (error) mostrarErro(error.message);   // ex.: "Item 1: escolha de 1 a 2 sabores para o tamanho Grande."
 ```
+
+**Reenvio sem duplicar (`p_chave_cliente`).** Gere a chave quando o pedido entra
+na fila (ex.: `crypto.randomUUID()`), guarde junto dele e mande **a mesma chave**
+em todas as tentativas. Se a resposta se perdeu mas o banco já gravou, o reenvio
+devolve o pedido existente sem gravar outro:
+`{ id, numero, status, subtotal, desconto, taxaEntrega, total, repetido: true }`
+(sem `itens`). A chave vale só para o usuário logado. Sem chave (`null`), cada
+chamada cria um pedido novo.
 Depois do sucesso: limpar o carrinho do SQLite e abrir o acompanhamento.
 
 ### Histórico e detalhes

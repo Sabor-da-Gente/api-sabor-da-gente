@@ -36,6 +36,7 @@ As migrations novas **adaptam** esse banco sem apagar nada. Por isso a ordem e a
 | 6 | `20261024142000_catalogo_novo.sql` | tamanhos, massas, sabores, preços, adicionais, cupom e taxa de entrega |
 | 7 | `20261024143000_realtime_legado.sql` | avisos em tempo real |
 | 8 | `20261024150000_status_pronto_retirada.sql` | status `pronto_para_retirada` |
+| 9 | `20261121120000_idempotencia_criar_pedido.sql` | coluna `pedidos.chave_cliente` e parâmetro `p_chave_cliente` em `criar_pedido` (reenvio não duplica pedido) |
 
 ### ⚠️ Migrations que NÃO devem ser aplicadas neste banco
 
@@ -93,8 +94,10 @@ O histórico de cada mudança é gravado por um gatilho, inclusive quando o pain
 
 ## Testes (opcional)
 
-Os testes rodam as migrations num PostgreSQL local que imita o Supabase e
-conferem as regras como visitante, cliente e admin (59 verificações).
+Os testes recriam as tabelas legadas (`testes/schema_legado.sql`) num PostgreSQL
+local que imita o Supabase, aplicam as migrations na ordem da tabela acima e
+conferem as regras como visitante, cliente e admin (61 verificações).
+Migration nova? Acrescente-a também na lista `ORDEM` de `testes/recriar_banco.sh`.
 
 ```bash
 PGHOST=localhost PGUSER=postgres ./testes/recriar_banco.sh

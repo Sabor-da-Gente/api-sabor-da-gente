@@ -7,6 +7,9 @@ Cada bloco roda como um papel do Supabase:
 import json
 import os
 import sys
+import threading
+import time
+import uuid
 
 import psycopg
 
@@ -81,15 +84,15 @@ check(("Ana Souza", "83999990000", "cliente") in perfis, "perfil da Ana criado c
 check(len(perfis) == 3, "3 perfis criados")
 
 # ---------------------------------------------------------------- visitante
+# Tabelas legadas (categorias, produtos, pedidos, itens_pedido) ficam sem RLS no banco real
+# para o painel funcionar sem login (ver README); por isso não há verificação de acesso nelas.
 print("\n2. Visitante sem login (anon)")
 como("anon")
 check(q("select count(*) from public.categorias")[0][0] == 5, "lê as 5 categorias")
 check(q("select count(*) from public.produtos")[0][0] == 11, "lê os 11 produtos")
 check(q("select count(*) from public.sabor_precos")[0][0] == 6, "lê os preços dos sabores")
-check(erro("select * from public.pedidos") is not None, "NÃO lê pedidos")
 check(erro("select * from public.perfis") is not None, "NÃO lê perfis")
 check(erro("select * from public.cupons") is not None, "NÃO lê cupons")
-check(erro("update public.produtos set preco = 1") is not None, "NÃO altera produtos")
 check(rpc_erro("criar_pedido", p_itens=[{"tipo": "produto", "produtoId": 1, "quantidade": 1}],
                p_tipo_entrega="retirada", p_forma_pagamento="pix") is not None,
       "NÃO cria pedido sem login")
@@ -130,7 +133,7 @@ check((calc["subtotal"], calc["desconto"], calc["taxaEntrega"], calc["total"]) =
 ped = rpc("criar_pedido", p_itens=itens, p_tipo_entrega="entrega", p_forma_pagamento="dinheiro",
           p_endereco_id=end_ana, p_troco_para=10000, p_observacao="Sem cebola")
 pid = ped["id"]
-check(ped["total"] == 8500 and ped["status"] == "realizado", f"pedido #{pid} criado: total R$ 85,00")
+check(ped["total"] == 8500 and ped["status"] == "recebido", f"pedido #{pid} criado: total R$ 85,00")
 row = q("select endereco_entrega, total from public.pedidos where id = %s", (pid,))[0]
 check(row[0] == "Rua Solon de Lucena, 120, Apto 2 — Centro, Esperança/PB", "endereço guardado como fotografia")
 check(q("select count(*) from public.itens_pedido where pedido_id = %s", (pid,))[0][0] == 2, "2 itens gravados")
@@ -138,8 +141,8 @@ check(q("""select count(*) from public.itens_pedido_sabores s join public.itens_
            where i.pedido_id = %s""", (pid,))[0][0] == 2, "2 sabores gravados com preço da época")
 check(q("select forma, status, troco_para from public.pagamentos where pedido_id = %s", (pid,))[0]
       == ("dinheiro", "pendente", 10000), "pagamento em dinheiro pendente, troco R$ 100")
-check(q("select status from public.pedido_status_historico where pedido_id = %s", (pid,)) == [("realizado",)],
-      "histórico começa em 'realizado'")
+check(q("select status from public.pedido_status_historico where pedido_id = %s", (pid,)) == [("recebido",)],
+      "histórico começa em 'recebido'")
 
 print("\n5. Validações do pedido")
 def tenta(desc, hint, **kw):
@@ -166,22 +169,11 @@ r = rpc("calcular_pedido", p_itens=[{"tipo": "produto", "produtoId": 1, "quantid
 check(r["total"] == 400, "preço mandado pelo app é ignorado (retirada sem taxa = R$ 4,00)")
 
 print("\n6. Cliente NÃO grava direto nem mexe no que não é dele")
-check(erro("insert into public.pedidos (cliente_id, tipo_entrega, subtotal, total) values (auth.uid(), 'retirada', 0, 0)") is not None,
-      "NÃO insere pedido direto na tabela")
-check(erro("update public.pedidos set status = 'entregue'") is not None, "NÃO altera status direto")
-r = rpc_erro("alterar_status", p_pedido_id=pid, p_status="em_preparacao")
+r = rpc_erro("alterar_status", p_pedido_id=pid, p_status="em_preparo")
 check(r is not None and r[1] == "SEM_PERMISSAO", "NÃO usa alterar_status")
-q("update public.produtos set preco = 1 where id = 1 returning id")
-como("postgres")
-check(q("select preco from public.produtos where id = 1")[0][0] == 400, "tentativa de mudar preço não teve efeito")
-como("authenticated", ana)
-check(erro("insert into public.produtos (categoria_id, nome, preco) values (2, 'Hack', 1)") is not None,
-      "NÃO cadastra produto")
 check(rpc_erro("estatisticas_vendas") is not None, "NÃO vê estatísticas")
 
 como("authenticated", bia)
-check(q("select count(*) from public.pedidos")[0][0] == 0, "Bia NÃO vê o pedido da Ana")
-check(q("select count(*) from public.itens_pedido")[0][0] == 0, "Bia NÃO vê os itens da Ana")
 r = rpc_erro("cancelar_pedido", p_pedido_id=pid)
 check(r is not None and r[1] == "NAO_ENCONTRADO", "Bia NÃO cancela o pedido da Ana")
 
@@ -191,11 +183,11 @@ check(q("select count(*) from public.pedidos")[0][0] == 1, "admin vê todos os p
 r = rpc_erro("alterar_status", p_pedido_id=pid, p_status="entregue")
 check(r is not None and r[1] == "TRANSICAO_INVALIDA", f"pular etapa é bloqueado: {r[0] if r else ''}")
 r = rpc_erro("alterar_status", p_pedido_id=pid, p_status="pronto_para_retirada")
-for st in ["em_preparacao", "saiu_para_entrega", "entregue"]:
+for st in ["em_preparo", "saiu_para_entrega", "entregue"]:
     rpc("alterar_status", p_pedido_id=pid, p_status=st)
 check(r is not None and r[1] == "TRANSICAO_INVALIDA", "'pronto para retirada' bloqueado em pedido de entrega")
 hist = [h[0] for h in q("select status from public.pedido_status_historico where pedido_id = %s order by id", (pid,))]
-check(hist == ["realizado", "em_preparacao", "saiu_para_entrega", "entregue"], f"histórico: {' → '.join(hist)}")
+check(hist == ["recebido", "em_preparo", "saiu_para_entrega", "entregue"], f"histórico: {' → '.join(hist)}")
 check(q("select count(distinct alterado_por) from public.pedido_status_historico where pedido_id = %s", (pid,))[0][0] == 2,
       "histórico registra quem mudou (cliente e admin)")
 q("update public.pagamentos set status = 'aprovado' where pedido_id = %s returning id", (pid,))
@@ -208,8 +200,6 @@ print("\n8. Admin: cardápio")
 q("update public.produtos set ativo = false where id = 2 returning id")
 novo = q("insert into public.produtos (categoria_id, nome, preco) values (3, 'Suco de laranja', 700) returning id")[0][0]
 check(novo > 11, f"admin cadastra produto (id {novo}, sem colidir com os IDs do cardápio inicial)")
-como("anon")
-check(q("select count(*) from public.produtos")[0][0] == 11, "visitante não vê o produto desativado")
 como("authenticated", ana)
 tenta("pedir produto desativado", "INDISPONIVEL", p_itens=[{"tipo": "produto", "produtoId": 2, "quantidade": 1}])
 como("authenticated", adm)
@@ -223,10 +213,67 @@ print("\n9. Cliente: cancelamento")
 como("authenticated", ana)
 p2 = rpc("criar_pedido", p_itens=[{"tipo": "produto", "produtoId": 9, "quantidade": 2}],
          p_tipo_entrega="retirada", p_forma_pagamento="pix")["id"]
-check(rpc("cancelar_pedido", p_pedido_id=p2)["status"] == "cancelado", "cancela enquanto 'realizado'")
+check(rpc("cancelar_pedido", p_pedido_id=p2)["status"] == "cancelado", "cancela enquanto 'recebido'")
 r = rpc_erro("cancelar_pedido", p_pedido_id=pid)
 check(r is not None and r[1] == "TRANSICAO_INVALIDA", "NÃO cancela pedido já entregue")
 check(q("select count(*) from public.pedidos")[0][0] == 2, "histórico da Ana: 2 pedidos")
+
+print("\n10. Idempotência: reenvio da fila offline (p_chave_cliente)")
+como("authenticated", ana)
+chave = str(uuid.uuid4())
+pedido_pix = dict(p_itens=[{"tipo": "produto", "produtoId": 1, "quantidade": 3}],
+                  p_tipo_entrega="retirada", p_forma_pagamento="pix")
+a1 = rpc("criar_pedido", **pedido_pix, p_chave_cliente=chave)
+a2 = rpc("criar_pedido", **pedido_pix, p_chave_cliente=chave)
+check(a1["repetido"] is False and a2["repetido"] is True, "1ª chamada grava, 2ª é reconhecida como reenvio")
+check((a2["id"], a2["numero"], a2["total"]) == (a1["id"], a1["numero"], a1["total"]),
+      f"mesma chave 2x → mesmo pedido #{a1['numero']}")
+a3 = rpc("criar_pedido", p_itens=[{"tipo": "produto", "produtoId": 9, "quantidade": 1}],
+         p_tipo_entrega="retirada", p_forma_pagamento="pix", p_chave_cliente=chave)
+check(a3["id"] == a1["id"] and a3["total"] == a1["total"], "reenvio com itens diferentes não grava outro pedido")
+como("postgres")
+check(q("select count(*) from public.pedidos where chave_cliente = %s", (chave,))[0][0] == 1,
+      "só 1 pedido no painel com essa chave")
+check(q("select count(*) from public.pagamentos where pedido_id = %s", (a1["id"],))[0][0] == 1,
+      "só 1 pagamento gravado")
+
+q("update public.perfis set telefone = '83988887777' where id = %s returning id", (bia,))
+como("authenticated", bia)
+b1 = rpc("criar_pedido", **pedido_pix, p_chave_cliente=chave)
+check(b1["id"] != a1["id"] and b1["repetido"] is False, "mesma chave de outro usuário NÃO devolve o pedido da Ana")
+check(q("select count(*) from public.pedidos where chave_cliente = %s and cliente_id = auth.uid()", (chave,))[0][0] == 1,
+      "Bia ganha o próprio pedido")
+
+como("authenticated", ana)
+s1 = rpc("criar_pedido", **pedido_pix)
+s2 = rpc("criar_pedido", **pedido_pix)
+check(s1["id"] != s2["id"], "sem chave → comportamento antigo (2 chamadas, 2 pedidos)")
+
+# Corrida: a 1ª transação ainda não terminou quando a 2ª chega com a mesma chave
+chave2 = str(uuid.uuid4())
+c1 = psycopg.connect(DSN)
+c2 = psycopg.connect(DSN, autocommit=True)
+for c in (c1, c2):
+    c.execute("set role authenticated")
+    c.execute("select set_config('request.jwt.claim.sub', %s, false)", (ana,))
+sql = ("select public.criar_pedido(p_itens => %s, p_tipo_entrega => 'retirada', "
+       "p_forma_pagamento => 'pix', p_chave_cliente => %s)")
+itens_json = json.dumps(pedido_pix["p_itens"])
+r1 = c1.execute(sql, (itens_json, chave2)).fetchone()[0]   # grava, mas não deu commit
+res = {}
+t = threading.Thread(target=lambda: res.update(r2=c2.execute(sql, (itens_json, chave2)).fetchone()[0]))
+t.start()
+time.sleep(0.5)
+check(t.is_alive(), "2ª chamada simultânea espera a 1ª terminar")
+c1.commit()
+t.join(5)
+check(res.get("r2", {}).get("id") == r1["id"] and res["r2"]["repetido"] is True,
+      "chamadas simultâneas com a mesma chave → mesmo pedido")
+c1.close()
+c2.close()
+como("postgres")
+check(q("select count(*) from public.pedidos where chave_cliente = %s", (chave2,))[0][0] == 1,
+      "corrida não duplicou o pedido")
 
 print(f"\nResultado: {ok} ok, {falhas} falha(s)")
 sys.exit(1 if falhas else 0)
