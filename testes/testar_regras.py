@@ -299,5 +299,33 @@ check(q("select id from public.enderecos where principal") == [(end_ana2,)], "pr
 como("anon")
 check(rpc_erro("definir_endereco_principal", p_endereco_id=end_ana2) is not None, "visitante NÃO chama a função")
 
+print("\n12. Favoritos na nuvem")
+como("authenticated", ana)
+q("insert into public.favoritos (produto_id) values (1) returning id")
+q("insert into public.favoritos (sabor_id) values (3) returning id")
+check(q("select count(*) from public.favoritos where usuario_id = auth.uid()")[0][0] == 2,
+      "cliente favorita produto e sabor (usuario_id preenchido sozinho)")
+check(erro("insert into public.favoritos (produto_id) values (1)") is not None, "NÃO repete o mesmo produto")
+check(erro("insert into public.favoritos (sabor_id) values (3)") is not None, "NÃO repete o mesmo sabor")
+check(erro("insert into public.favoritos (produto_id, sabor_id) values (2, 1)") is not None,
+      "NÃO aceita produto e sabor no mesmo favorito")
+check(erro("insert into public.favoritos (criado_em) values (now())") is not None, "NÃO aceita favorito vazio")
+
+como("authenticated", bia)
+check(q("select count(*) from public.favoritos")[0][0] == 0, "Bia NÃO vê os favoritos da Ana")
+check(erro("insert into public.favoritos (usuario_id, produto_id) values (%s, 2)", (ana,)) is not None,
+      "Bia NÃO cria favorito em nome da Ana")
+q("insert into public.favoritos (produto_id) values (1) returning id")
+check(q("select count(*) from public.favoritos")[0][0] == 1, "Bia favorita o mesmo produto que a Ana")
+q("delete from public.favoritos where produto_id = 1 returning id")
+como("authenticated", ana)
+check(q("select count(*) from public.favoritos where produto_id = 1")[0][0] == 1,
+      "delete da Bia NÃO apagou o favorito da Ana")
+q("delete from public.favoritos where produto_id = 1 returning id")
+check(q("select count(*) from public.favoritos")[0][0] == 1, "Ana remove o próprio favorito")
+
+como("anon")
+check(erro("select * from public.favoritos") is not None, "visitante NÃO lê favoritos")
+
 print(f"\nResultado: {ok} ok, {falhas} falha(s)")
 sys.exit(1 if falhas else 0)
