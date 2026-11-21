@@ -28,7 +28,7 @@ As migrations novas **adaptam** esse banco sem apagar nada. Por isso a ordem e a
 
 | # | Arquivo | O que faz |
 |---|---|---|
-| 1 | `20261016120500_adaptar_schema_existente.sql` | cria perfis, endereços, catálogo de pizza, pagamentos e histórico; acrescenta colunas às tabelas legadas |
+| 1 | `20261016120500_adaptar_schema_existente.sql` | cria perfis, endereços, catálogo de pizza, pagamentos, histórico e favoritos; acrescenta colunas às tabelas legadas |
 | 2 | `20261024135000_funcoes_base.sql` | gatilhos de `atualizado_em` e criação automática do perfil no cadastro |
 | 3 | `20261024141000_seguranca_legado.sql` | `eh_admin()`, RLS nas tabelas novas e gatilho que grava o histórico de status |
 | 4 | `20261016120200_funcoes.sql` | funções originais de cálculo e de pedido |
@@ -98,7 +98,7 @@ O histórico de cada mudança é gravado por um gatilho, inclusive quando o pain
 
 Os testes recriam as tabelas legadas (`testes/schema_legado.sql`) num PostgreSQL
 local que imita o Supabase, aplicam as migrations na ordem da tabela acima e
-conferem as regras como visitante, cliente e admin (67 verificações).
+conferem as regras como visitante, cliente e admin (78 verificações).
 Migration nova? Acrescente-a também na lista `ORDEM` de `testes/recriar_banco.sh`.
 
 ```bash

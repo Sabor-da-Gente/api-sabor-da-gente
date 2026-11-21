@@ -294,12 +294,15 @@ supabase.removeChannel(canal);
 
 ---
 
-## 6. Favoritos (fase 2)
+## 6. Favoritos (cliente logado)
+Ficam na conta: o cliente vê os mesmos favoritos em qualquer celular.
 ```ts
-await supabase.from('favoritos').insert({ produto_id: 1 });   // ou { sabor_id: 3 }
-await supabase.from('favoritos').select('*, produtos(*), sabores(*)');
+await supabase.from('favoritos').insert({ produto_id: 1 });   // ou { sabor_id: 3 }; usuario_id é preenchido sozinho
+await supabase.from('favoritos').select('*, produtos(*), sabores(*)');   // só os do próprio cliente (RLS)
 await supabase.from('favoritos').delete().eq('produto_id', 1);
 ```
+Cada favorito é **um produto ou um sabor** (nunca os dois). Favoritar de novo o
+mesmo item dá erro de duplicidade (`error.code = '23505'`): trate como "já favoritado".
 
 ---
 

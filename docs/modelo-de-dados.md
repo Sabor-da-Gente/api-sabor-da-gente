@@ -83,7 +83,7 @@ erDiagram
 | `itens_pedido_adicionais` | Adicionais da pizza, com nome e preço da época. |
 | `pedido_status_historico` | Linha do tempo do acompanhamento (quem mudou e quando). |
 | `pagamentos` | Pagamento **simulado** (1 por pedido). |
-| `favoritos` | *(fase 2)* Produto **ou** sabor favorito. |
+| `favoritos` | Produto **ou** sabor favorito do cliente (um por item, só o dono vê). Sincroniza os favoritos do app entre aparelhos. |
 
 ## Por que pizza é diferente dos outros produtos
 
@@ -143,6 +143,6 @@ O mesmo padrão vale para pedidos e perfil: uma interface, duas implementações
 
 | Fase 1 (essencial) | Fase 2 (se der tempo) |
 |---|---|
-| perfis, endereços, catálogo, pedidos, itens, pagamentos, histórico, Realtime | cupons, favoritos, estatísticas avançadas, imagens no Supabase Storage |
+| perfis, endereços, catálogo, pedidos, itens, pagamentos, histórico, Realtime, favoritos | cupons, estatísticas avançadas, imagens no Supabase Storage |
 
 As tabelas e regras da fase 2 já estão no banco; basta não usar até lá.
