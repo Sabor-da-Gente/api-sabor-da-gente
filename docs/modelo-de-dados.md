@@ -77,7 +77,7 @@ erDiagram
 ### Pedido
 | Tabela | Papel |
 |---|---|
-| `pedidos` | Cabeçalho: cliente, entrega/retirada, endereço (fotografia), status, valores. |
+| `pedidos` | Cabeçalho: cliente, entrega/retirada, endereço (fotografia), status, valores. `chave_cliente` (UUID do app, única por cliente) evita pedido duplicado no reenvio; nula em pedidos antigos e do painel. |
 | `itens_pedido` | Cada linha: `produto` (aponta para `produtos`) ou `pizza` (aponta para `tamanhos` + `massas`). |
 | `itens_pedido_sabores` | Sabores da pizza, com nome e preço da época. |
 | `itens_pedido_adicionais` | Adicionais da pizza, com nome e preço da época. |
@@ -104,6 +104,7 @@ uma linha em `produtos`: o banco combina as peças na hora do pedido.
 | R7 | Fluxo de status (abaixo); só admin avança; cliente só cancela em "realizado" | funções `alterar_status` / `cancelar_pedido` |
 | R8 | Cupom: ativo, na validade, subtotal ≥ mínimo, dentro do limite de usos; desconto ≤ subtotal | função `calcular_totais` |
 | R9 | Pedido, itens, sabores, adicionais, pagamento e 1º status gravados juntos | função `criar_pedido` (uma transação) |
+| R10 | Reenvio com a mesma `chave_cliente` devolve o pedido já gravado, sem duplicar | função `criar_pedido` + índice único `(cliente_id, chave_cliente)` |
 
 ### Fluxo de status (R7)
 ```
