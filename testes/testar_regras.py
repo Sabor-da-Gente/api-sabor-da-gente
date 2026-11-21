@@ -275,5 +275,29 @@ como("postgres")
 check(q("select count(*) from public.pedidos where chave_cliente = %s", (chave2,))[0][0] == 1,
       "corrida não duplicou o pedido")
 
+print("\n11. Endereço principal (definir_endereco_principal)")
+como("authenticated", ana)
+end_ana2 = q("""insert into public.enderecos (apelido, logradouro, numero, bairro, cidade)
+                values ('Trabalho', 'Rua do Trabalho', '50', 'Centro', 'Esperança') returning id""")[0][0]
+rpc("definir_endereco_principal", p_endereco_id=end_ana)
+r = rpc("definir_endereco_principal", p_endereco_id=end_ana2)
+principais = q("select id from public.enderecos where principal")
+check(r["id"] == end_ana2 and principais == [(end_ana2,)], "dono troca o principal: só o novo fica marcado")
+
+como("authenticated", bia)
+r = rpc_erro("definir_endereco_principal", p_endereco_id=end_ana)
+check(r is not None and r[1] == "NAO_ENCONTRADO", "outro usuário recebe NAO_ENCONTRADO")
+como("authenticated", ana)
+check(q("select id from public.enderecos where principal") == [(end_ana2,)],
+      "tentativa da Bia não mexeu nos endereços da Ana")
+
+q("update public.enderecos set ativo = false where id = %s returning id", (end_ana,))
+r = rpc_erro("definir_endereco_principal", p_endereco_id=end_ana)
+check(r is not None and r[1] == "NAO_ENCONTRADO", "endereço inativo recebe NAO_ENCONTRADO")
+check(q("select id from public.enderecos where principal") == [(end_ana2,)], "principal continua o mesmo")
+
+como("anon")
+check(rpc_erro("definir_endereco_principal", p_endereco_id=end_ana2) is not None, "visitante NÃO chama a função")
+
 print(f"\nResultado: {ok} ok, {falhas} falha(s)")
 sys.exit(1 if falhas else 0)

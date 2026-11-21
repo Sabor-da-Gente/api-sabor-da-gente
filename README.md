@@ -37,6 +37,7 @@ As migrations novas **adaptam** esse banco sem apagar nada. Por isso a ordem e a
 | 7 | `20261024143000_realtime_legado.sql` | avisos em tempo real |
 | 8 | `20261024150000_status_pronto_retirada.sql` | status `pronto_para_retirada` |
 | 9 | `20261121120000_idempotencia_criar_pedido.sql` | coluna `pedidos.chave_cliente` e parâmetro `p_chave_cliente` em `criar_pedido` (reenvio não duplica pedido) |
+| 10 | `20261122120000_definir_endereco_principal.sql` | função `definir_endereco_principal` (troca o endereço principal numa transação) |
 
 ### ⚠️ Migrations que NÃO devem ser aplicadas neste banco
 
@@ -58,6 +59,7 @@ O histórico de cada mudança é gravado por um gatilho, inclusive quando o pain
 |---|---|---|
 | `calcular_pedido(itens, tipo_entrega, cupom)` | app | simula o total sem gravar |
 | `criar_pedido(...)` | app (logado) | valida, recalcula preços no banco e grava pedido, itens, pagamento e histórico |
+| `definir_endereco_principal(id)` | app (logado) | marca o endereço como principal e desmarca os outros, numa transação |
 | `cancelar_pedido(id)` | app (dono do pedido) | cancela enquanto o status é `recebido` |
 | `alterar_status(id, status)` | admin | muda o status respeitando as transições |
 | `estatisticas_vendas(de, ate)` | admin | faturamento, ticket médio e mais vendidos |
@@ -96,7 +98,7 @@ O histórico de cada mudança é gravado por um gatilho, inclusive quando o pain
 
 Os testes recriam as tabelas legadas (`testes/schema_legado.sql`) num PostgreSQL
 local que imita o Supabase, aplicam as migrations na ordem da tabela acima e
-conferem as regras como visitante, cliente e admin (61 verificações).
+conferem as regras como visitante, cliente e admin (67 verificações).
 Migration nova? Acrescente-a também na lista `ORDEM` de `testes/recriar_banco.sh`.
 
 ```bash
